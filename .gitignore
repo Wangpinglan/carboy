@@ -6,3 +6,7 @@ __pycache__/
 
 # WorkBuddy 本地工作区（会话记录，不属于项目）
 .workbuddy/
+
+# 本地杂项
+.Trash-0/
+.tmp_make.log

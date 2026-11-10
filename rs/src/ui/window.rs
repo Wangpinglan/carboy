@@ -382,7 +382,7 @@ pub fn build(app: &adw::Application) -> Rc<Ui> {
                 .comments("为 Wine / Proton 应用生成能被桌面环境正确识别的 .desktop")
                 .developers(["Carboy contributors"])
                 .license_type(gtk::License::MitX11)
-                .website("https://github.com/carboy/carboy")
+                .website("https://github.com/Wangpinglan/carboy")
                 .build();
             dlg.present(Some(&window));
         }

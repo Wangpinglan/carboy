@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.85"
 description = "为 Wine / Proton 应用生成可用的 .desktop"
 license = "MIT"
-repository = "https://github.com/carboy/carboy"
+repository = "https://github.com/Wangpinglan/carboy"
 
 [[bin]]
 name = "carboy"

@@ -3,7 +3,7 @@ Version:        0.1.1
 Release:        1%{?dist}
 Summary:        为 Wine / Proton 应用生成可用的 .desktop
 License:        MIT
-URL:            https://github.com/carboy/carboy
+URL:            https://github.com/Wangpinglan/carboy
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  rust >= 1.85

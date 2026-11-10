@@ -17,7 +17,7 @@
     </p>
   </description>
   <launchable type="desktop-id">io.github.carboy.MkDesktop.desktop</launchable>
-  <url type="homepage">https://github.com/carboy/carboy</url>
+  <url type="homepage">https://github.com/Wangpinglan/carboy</url>
   <provides>
     <binary>carboy</binary>
   </provides>
