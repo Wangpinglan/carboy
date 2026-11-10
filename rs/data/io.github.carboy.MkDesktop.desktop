@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Carboy
+GenericName=启动项生成器
+GenericName[zh_CN]=启动项生成器
+Comment=为 Wine / Proton 应用生成可用的 .desktop
+Comment[zh_CN]=为 Wine / Proton 应用生成可用的 .desktop
+Exec=carboy
+Icon=io.github.carboy.MkDesktop
+Terminal=false
+Categories=Utility;
+Keywords=wine;proton;desktop;umu;launcher;
+StartupNotify=true
+StartupWMClass=io.github.carboy.MkDesktop

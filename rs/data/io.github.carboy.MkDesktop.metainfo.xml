@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.carboy.MkDesktop</id>
+  <name>Carboy</name>
+  <summary>为 Wine / Proton 应用生成可用的 .desktop</summary>
+  <summary xml:lang="zh_CN">为 Wine / Proton 应用生成可用的 .desktop</summary>
+  <description>
+    <p>
+      图形化的 .desktop 生成器：填名称、选 exe，自动推导窗口标识（StartupWMClass）、
+      从 PE 资源里抠出图标、装进 hicolor 七档尺寸并刷新缓存。
+      生成的启动项能被 GNOME / KDE / XFCE 正确识别，不再出现齿轮图标或任务栏合并。
+    </p>
+    <p xml:lang="zh_CN">
+      图形化的 .desktop 生成器：填名称、选 exe，自动推导窗口标识（StartupWMClass）、
+      从 PE 资源里抠出图标、装进 hicolor 七档尺寸并刷新缓存。
+      生成的启动项能被 GNOME / KDE / XFCE 正确识别，不再出现齿轮图标或任务栏合并。
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.carboy.MkDesktop.desktop</launchable>
+  <url type="homepage">https://github.com/carboy/carboy</url>
+  <provides>
+    <binary>carboy</binary>
+  </provides>
+  <categories>
+    <category>Utility</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.1" date="2026-11-10">
+      <description>
+        <p>修复管理页重复行、环境变量行删除错位与预览不刷新；umu 预装后自动回填路径；接通 GAMEID 重置与「新建」按钮。</p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-11-10"/>
+  </releases>
+</component>
