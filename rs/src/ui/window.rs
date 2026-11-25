@@ -778,7 +778,18 @@ impl Ui {    fn window(&self) -> &adw::ApplicationWindow {
                 self.row_prefix.set_subtitle(&s);
                 self.maybe_init_prefix(&s);
             }
-            "proton" => self.row_proton.set_subtitle(&s),
+            "proton" => {
+                // 选成 compatibilitytools.d 这种容器目录时，往下探一层找到真正带
+                // toolmanifest.vdf 的 Proton 根目录，否则 umu 直接 FileNotFoundError。
+                let resolved = system::resolve_proton(&s);
+                if resolved.is_empty() || resolved == s {
+                    self.row_proton.set_subtitle(&s);
+                } else {
+                    self.files.borrow_mut().proton = resolved.clone();
+                    self.row_proton.set_subtitle(&resolved);
+                    self.toast_msg(&format!("Proton 定位到 {}", resolved));
+                }
+            }
             "wine" => {
                 let resolved = system::resolve_wine(&s);
                 if resolved.is_empty() {

@@ -156,6 +156,111 @@ pub fn resolve_wine(value: &str) -> String {
     which(value.trim()).unwrap_or_default()
 }
 
+// ---------------------------------------------------------------- proton
+
+/// umu 只认 Proton 根目录：`resolve_runtime()` 在里面找不到 `toolmanifest.vdf`
+/// 就直接 FileNotFoundError。
+pub fn is_proton_root(d: &Path) -> bool {
+    d.join("toolmanifest.vdf").is_file()
+}
+
+/// Proton 目录 → 真正的 Proton 根目录。
+///
+/// 用户十有八九选的是 `~/.local/share/Steam/compatibilitytools.d` 这个**容器目录**
+/// （里面装着好几个 Proton），直接当 PROTONPATH 传给 umu 是起不来的，
+/// 所以这里往下探一层，按名字倒序取最新那个（和 find_wine 一个口味）。
+/// 版本名（`GE-Proton11-12`）或压根不存在的路径原样返回，交给 umu 自己认。
+pub fn resolve_proton(value: &str) -> String {
+    let v = value.trim();
+    if v.is_empty() {
+        return String::new();
+    }
+    let p = expand(v);
+    if !p.is_dir() {
+        return v.to_string();
+    }
+    if is_proton_root(&p) {
+        return p.to_string_lossy().to_string();
+    }
+    let mut hits: Vec<PathBuf> = fs::read_dir(&p)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|c| c.is_dir() && is_proton_root(c))
+                .collect()
+        })
+        .unwrap_or_default();
+    if hits.is_empty() {
+        return p.to_string_lossy().to_string();
+    }
+    hits.sort();
+    hits.pop()
+        .map(|c| c.to_string_lossy().to_string())
+        .unwrap_or_else(|| p.to_string_lossy().to_string())
+}
+
+// ---------------------------------------------------------------- 前缀
+
+/// 建完前缀要钉死的 Windows 版本。
+///
+/// Wine 11（dwproton-11.0-x）的 `wineboot` 默认建出来是 Windows 11 build 22000，
+/// 而 WineGUI 建出来的 bottle 是 win10 build 19045 —— 它在 `BottleManager::new_bottle()`
+/// 里建完 bottle 后**无条件**补跑一次 `winetricks win10`。原神这类游戏在
+/// “Win11 build 22000 + ReleaseId 2009”这种混搭版本号上会直接闪退，所以这里照抄那一步。
+///
+/// winetricks 的 win10 动词最终就是 `winecfg -v win10`（见 Proton 自带的
+/// `protonfixes/files/bin/winetricks` 里 `w_set_winver`），所以 Wine 模式不需要
+/// 装 winetricks —— 这也守住了“零运行时解释器”那条铁律。
+pub const PREFIX_WINVER: &str = "win10";
+
+/// POSIX 单引号转义，`sh -c` 里安全。
+pub fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// 前缀初始化用到的 runner 信息。
+pub struct PrefixInit {
+    pub umu_mode: bool,
+    /// umu-run 路径（umu 模式）
+    pub umu: String,
+    /// GAMEID（可空，空则 umu 用 umu-default）
+    pub gameid: String,
+    /// PROTONPATH（可空，空则 umu 自己下载 UMU-Proton）
+    pub proton: String,
+    /// wine 可执行文件（Wine 模式）
+    pub wine: String,
+}
+
+impl PrefixInit {
+    /// 按顺序要跑的命令：① 建前缀 ② 把 Windows 版本设成 win10。
+    pub fn cmds(&self, prefix: &Path) -> Vec<String> {
+        let win = shell_quote(&prefix.to_string_lossy());
+        // 调用方环境里残留的 WINE / WINESERVER / WINELOADER 会把 Proton 自己的
+        // wine 顶掉（WineGUI 跑 runner 前同样先 `env -u` 这三项）。
+        let clean = "env -u WINE -u WINESERVER -u WINELOADER";
+        if self.umu_mode {
+            let mut env = format!("WINEPREFIX={win} GAMEID={}", shell_quote(&self.gameid));
+            if !self.proton.is_empty() {
+                env.push_str(&format!(" PROTONPATH={}", shell_quote(&self.proton)));
+            }
+            let umu = shell_quote(&self.umu);
+            vec![
+                // 上游 umu_run.py 认 `createprefix` 这个特殊命令名
+                // （`is_createpfx = is_cmd and (not cmd or cmd == "createprefix")`）
+                format!("{clean} {env} {umu} createprefix 2>&1"),
+                // 走 umu 的 winetricks 动词，用的是 Proton 自带的那份 winetricks
+                format!("{clean} {env} {umu} winetricks {PREFIX_WINVER} 2>&1"),
+            ]
+        } else {
+            let w = shell_quote(&self.wine);
+            vec![
+                format!("{clean} WINEPREFIX={win} {w} wineboot -i 2>&1"),
+                format!("{clean} WINEPREFIX={win} {w} winecfg -v {PREFIX_WINVER} 2>&1"),
+            ]
+        }
+    }
+}
+
 // ---------------------------------------------------------------- 窗口
 
 #[derive(Debug, Clone)]
@@ -508,4 +613,49 @@ pub fn strip_ansi(s: &str) -> String {
         out.push(c);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_quote_wraps_and_escapes() {
+        assert_eq!(shell_quote("/tmp/a b"), "'/tmp/a b'");
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn prefix_cmds_umu_sets_winver_after_create() {
+        let init = PrefixInit {
+            umu_mode: true,
+            umu: "/home/u/.local/bin/umu-run".into(),
+            gameid: "umu-0".into(),
+            proton: "/p/GE-Proton11-12".into(),
+            wine: String::new(),
+        };
+        let cmds = init.cmds(Path::new("/pfx"));
+        assert_eq!(cmds.len(), 2);
+        assert!(cmds[0].contains("createprefix"), "{}", cmds[0]);
+        assert!(cmds[1].contains(&format!("winetricks {PREFIX_WINVER}")), "{}", cmds[1]);
+        assert!(cmds[1].contains("PROTONPATH='/p/GE-Proton11-12'"), "{}", cmds[1]);
+        assert!(cmds[1].contains("WINEPREFIX='/pfx'"), "{}", cmds[1]);
+        assert!(cmds[1].starts_with("env -u WINE"), "{}", cmds[1]);
+    }
+
+    #[test]
+    fn prefix_cmds_wine_uses_winecfg() {
+        let init = PrefixInit {
+            umu_mode: false,
+            umu: String::new(),
+            gameid: String::new(),
+            proton: String::new(),
+            wine: "/usr/bin/wine".into(),
+        };
+        let cmds = init.cmds(Path::new("/pfx"));
+        assert_eq!(cmds.len(), 2);
+        assert!(cmds[0].ends_with("wineboot -i 2>&1"), "{}", cmds[0]);
+        assert!(cmds[1].ends_with("winecfg -v win10 2>&1"), "{}", cmds[1]);
+        assert!(!cmds[1].contains("PROTONPATH"), "{}", cmds[1]);
+    }
 }

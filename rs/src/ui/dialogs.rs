@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -11,7 +11,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk::{gio, glib};
 
-use crate::engine::system;
+use crate::engine::{desktop, system};
 use crate::ui::window::Ui;
 
 enum Msg {
@@ -20,9 +20,7 @@ enum Msg {
     Fail(String),
 }
 
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
+use system::shell_quote;
 
 fn open_window_dialog(ui: &Rc<Ui>, title: &str, width: i32, height: i32) -> (adw::Window, adw::HeaderBar) {
     let win = adw::Window::builder()
@@ -300,9 +298,11 @@ echo "==> 已装到 $HOME/.local/bin/umu-run（版本 $VER）"
 
 // ---------------------------------------------------------------- 前缀初始化
 
-/// 选中的前缀目录是空的（缺 system.reg / drive_c）时自动初始化：
-/// umu 模式跑 `umu-run createprefix`（上游 umu_run.py 官方支持的建前缀用法），
-/// Wine 模式跑 `wine wineboot -i`。
+/// 选中的前缀目录是空的（缺 system.reg / drive_c）时自动初始化，两步：
+/// ① umu 模式跑 `umu-run createprefix`（上游 umu_run.py 官方支持的建前缀用法），
+///    Wine 模式跑 `wine wineboot -i`；
+/// ② 建完把 Windows 版本钉到 win10（见 `system::PREFIX_WINVER`）。
+///    少了第 ② 步，Wine 11 默认留下的 Win11 build 22000 会让原神这类游戏闪退。
 pub fn open_prefix_init(ui: &Rc<Ui>, dir: PathBuf) {
     let (win, header) = open_window_dialog(ui, "初始化 Wine 前缀", 640, 420);
     let spinner = gtk::Spinner::new();
@@ -323,38 +323,60 @@ pub fn open_prefix_init(ui: &Rc<Ui>, dir: PathBuf) {
     body.append(&sc);
     win.set_content(Some(&body));
 
-    let dq = dir.to_string_lossy().to_string();
-    let umu_without_proton = ui.umu_mode() && ui.files.borrow().proton.is_empty();
-    let cmd = if ui.umu_mode() {
-        let runner_raw = ui.r_umu.text().trim().to_string();
-        let runner = if runner_raw.is_empty() { "umu-run".to_string() } else { runner_raw };
+    {
+        let mut start = buf.start_iter();
+        buf.insert(
+            &mut start,
+            "两步：① 建前缀 ② 把 Windows 版本设成 win10（Wine 11 默认给 Win11 22000）\n\n",
+        );
+    }
+
+    let umu_mode = ui.umu_mode();
+    let umu_without_proton = umu_mode && ui.files.borrow().proton.is_empty();
+
+    let cmds = if umu_mode {
+        let raw = ui.r_umu.text().trim().to_string();
+        let umu = if raw.is_empty() {
+            system::find_umu().unwrap_or_else(|| "umu-run".to_string())
+        } else {
+            let resolved = system::resolve_umu(&raw);
+            if resolved.is_empty() { raw.clone() } else { resolved }
+        };
         let mut gid = ui.r_gameid.text().trim().to_string();
         if !gid.starts_with("umu-") {
             gid = "umu-0".to_string();
         }
-        let mut env = format!("WINEPREFIX={} GAMEID={}", shell_quote(&dq), shell_quote(&gid));
-        let proton = ui.files.borrow().proton.clone();
-        if !proton.is_empty() {
-            env.push_str(&format!(" PROTONPATH={}", shell_quote(&proton)));
-        }
-        format!("env {env} {} createprefix 2>&1", shell_quote(&runner))
-    } else {
-        let wine = {
-            let f = ui.files.borrow();
-            let w = f.wine.clone();
-            if w.is_empty() { system::find_wine() } else { Some(w) }
+        let init = system::PrefixInit {
+            umu_mode: true,
+            umu,
+            gameid: gid,
+            proton: system::resolve_proton(&ui.files.borrow().proton),
+            wine: String::new(),
         };
-        let Some(wine) = wine else {
+        init.cmds(&dir)
+    } else {
+        let f = ui.files.borrow();
+        let wine = if f.wine.is_empty() {
+            system::find_wine().unwrap_or_default()
+        } else {
+            let resolved = system::resolve_wine(&f.wine);
+            if resolved.is_empty() { f.wine.clone() } else { resolved }
+        };
+        drop(f);
+        if wine.is_empty() {
             let mut end = buf.end_iter();
             buf.insert(&mut end, "没找到 wine 可执行文件，先选一个 wine 再重新选前缀目录。\n");
             win.present();
             return;
+        }
+        let init = system::PrefixInit {
+            umu_mode: false,
+            umu: String::new(),
+            gameid: String::new(),
+            proton: String::new(),
+            wine,
         };
-        format!(
-            "env WINEPREFIX={} {} wineboot -i 2>&1",
-            shell_quote(&dq),
-            shell_quote(&wine)
-        )
+        init.cmds(&dir)
     };
 
     let start = {
@@ -363,8 +385,8 @@ pub fn open_prefix_init(ui: &Rc<Ui>, dir: PathBuf) {
         let buf = buf.clone();
         let sc = sc.clone();
         let spinner = spinner.clone();
-        move |cmd: String, dir: PathBuf| {
-            run_prefix_init(&ui, &win, &buf, &sc, &spinner, cmd, dir);
+        move |cmds: Vec<String>, dir: PathBuf| {
+            run_prefix_init(&ui, &win, &buf, &sc, &spinner, cmds, dir);
         }
     };
 
@@ -386,7 +408,7 @@ pub fn open_prefix_init(ui: &Rc<Ui>, dir: PathBuf) {
             let win = win.clone();
             move |_, resp| {
                 if resp == "continue" {
-                    start(cmd.clone(), dir.clone());
+                    start(cmds.clone(), dir.clone());
                 } else {
                     win.close();
                 }
@@ -397,7 +419,7 @@ pub fn open_prefix_init(ui: &Rc<Ui>, dir: PathBuf) {
         return;
     }
 
-    start(cmd, dir);
+    start(cmds, dir);
     win.present();
 }
 
@@ -407,45 +429,93 @@ fn run_prefix_init(
     buf: &gtk::TextBuffer,
     sc: &gtk::ScrolledWindow,
     spinner: &gtk::Spinner,
-    cmd: String,
+    cmds: Vec<String>,
     dir: PathBuf,
 ) {
-    {
-        let mut end = buf.end_iter();
-        buf.insert(&mut end, &format!("$ {cmd}\n"));
-    }
     spinner.start();
 
     let (tx, rx) = channel();
-    run_shell(cmd, dir.clone(), tx);
+    let cwd = {
+        let h = desktop::home();
+        if h.as_os_str().is_empty() { PathBuf::from("/") } else { h }
+    };
+    std::thread::spawn({
+        let dir = dir.clone();
+        move || {
+            // 在 $HOME 里跑：winetricks / protonfixes 都假定自己不在 prefix 目录里，
+            // 别把正在建的那个目录当成 cwd 传下去。
+            let mut winver_ok = false;
+            for (i, cmd) in cmds.iter().enumerate() {
+                let _ = tx.send(Msg::Line(format!("$ {cmd}")));
+                let res = exec_stream(cmd, &cwd, &tx);
+                if i == 0 {
+                    // dwproton 等定制 Proton 在 createprefix 收尾时以非零状态退出，
+                    // 前缀其实已经建好；以 system.reg / drive_c 是否存在为准。
+                    if let Err(e) = res {
+                        let _ = tx.send(Msg::Line(format!(
+                            "\n建前缀的命令以 {e} 退出，下面按 system.reg / drive_c 判断结果"
+                        )));
+                    }
+                    continue;
+                }
+                match res {
+                    Ok(()) => winver_ok = true,
+                    Err(e) => {
+                        let _ = tx.send(Msg::Line(format!("\n✗ 设 Windows 版本失败：{e}")));
+                        break;
+                    }
+                }
+            }
+
+            let ready = dir.join("system.reg").is_file() && dir.join("drive_c").is_dir();
+            if !ready {
+                let _ = tx.send(Msg::Fail("前缀没建起来（缺 system.reg / drive_c）".into()));
+            } else if !winver_ok {
+                let _ = tx.send(Msg::Fail(
+                    "前缀建好了，但 Windows 版本没设成 win10，游戏可能照样闪退".into(),
+                ));
+            } else {
+                let _ = tx.send(Msg::Done(dir));
+            }
+        }
+    });
 
     pump(rx, buf.clone(), sc.clone(), spinner.clone(), gtk::Stack::new(), {
         let ui = Rc::clone(ui);
         let win = win.clone();
-        let buf = buf.clone();
-        let dir = dir.clone();
         move |_: PathBuf, ok: bool| {
             if ok {
-                ui.toast_msg("前缀初始化完成");
-                win.close();
-                return;
-            }
-            // dwproton 等定制 Proton 在 createprefix 收尾时会以非零状态退出，
-            // 但前缀实际已经建好；以 system.reg / drive_c 是否存在为准。
-            let p = PathBuf::from(&dir);
-            if p.join("system.reg").is_file() && p.join("drive_c").is_dir() {
-                let mut end = buf.end_iter();
-                buf.insert(
-                    &mut end,
-                    "\n命令以非零状态退出，但 system.reg / drive_c 已就位，前缀创建成功。\n",
-                );
-                ui.toast_msg("前缀已创建（命令退出码非零，可忽略）");
+                ui.toast_msg("前缀初始化完成（Windows 版本已设为 win10）");
                 win.close();
             } else {
                 ui.toast_msg("前缀初始化失败，看日志");
             }
         }
     });
+}
+
+/// 跑一条命令，边跑边把输出推给 tx；失败返回原因。
+fn exec_stream(cmd: &str, cwd: &Path, tx: &Sender<Msg>) -> Result<(), String> {
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    if let Some(out) = child.stdout.take() {
+        for line in BufReader::new(out).lines() {
+            let Ok(l) = line else { break };
+            let _ = tx.send(Msg::Line(system::strip_ansi(&l)));
+        }
+    }
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("退出码 {}", status.code().unwrap_or(-1)))
+    }
 }
 
 fn start_log(stack: &gtk::Stack, spinner: &gtk::Spinner) {

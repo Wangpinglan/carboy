@@ -22,8 +22,13 @@ make rpm && make deb                      # 出包（产物在 ../out）
 
 细节见 [rs/README.md](rs/README.md)。
 
-## 三条踩过的坑
+## 踩过的坑
 
 1. `GAMEID` 必须以 `umu-` 开头，否则 umu 把 `SteamAppId` 写 0，所有游戏共用 `steam_app_0`。
 2. `StartupWMClass` 大小写敏感（GNOME 用 `g_str_hash` 精确比较）。
 3. 图标装了不显示，多半是用户目录的 hicolor 缺 `index.theme`，`gtk-update-icon-cache` 直接罢工。
+4. **建完前缀必须把 Windows 版本钉到 `win10`**。Wine 11 / dwproton 的 `wineboot` 默认建出来是
+   Windows 11 build 22000，而 WineGUI 建的无条件补跑一次 `winetricks win10`（19045）——
+   原神这类游戏在 Win11 build 22000 的前缀里直接闪退。见 `system::PREFIX_WINVER`。
+5. `PROTONPATH` 必须是带 `toolmanifest.vdf` 的 Proton **根目录**；选成 `compatibilitytools.d`
+   这种容器目录时 umu 会 `FileNotFoundError`，所以选完要往下探一层（`system::resolve_proton`）。
