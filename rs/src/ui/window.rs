@@ -188,8 +188,6 @@ pub fn build(app: &adw::Application) -> Rc<Ui> {
 
     let (row_umu_build, b_umu_build) = tool_row("构建 umu-launcher", "从源码编译，或装预编译包");
     let (row_wine_build, b_wine_build) = tool_row("编译 Wine", "从源码构建到 build/wine");
-    let (row_winetricks, b_winetricks) =
-        tool_row("运行 winetricks", "选一个前缀，自动用建它的那份 wine / Proton");
     let (row_refresh, b_refresh) = tool_row("刷新图标与桌面索引", "改完图标不显示时点这里");
 
     let adv = adw::ExpanderRow::builder().title("高级").build();
@@ -200,7 +198,6 @@ pub fn build(app: &adw::Application) -> Rc<Ui> {
     adv.add_row(&gtk::Separator::new(gtk::Orientation::Horizontal));
     adv.add_row(&row_umu_build);
     adv.add_row(&row_wine_build);
-    adv.add_row(&row_winetricks);
     adv.add_row(&row_refresh);
 
     let g_adv = adw::PreferencesGroup::new();
@@ -352,9 +349,15 @@ pub fn build(app: &adw::Application) -> Rc<Ui> {
     let b_new = gtk::Button::with_label("新建");
     b_new.add_css_class("flat");
     b_new.set_tooltip_text(Some("清空表单，从头做一条新的"));
-    // pack_end 先包的靠最右：菜单占右上角，新建在它左边
+    // 前缀维护和"新建"是同一类操作（整条链路重来一遍），都放顶栏；
+    // 表单页的「高级」里只留构建类入口。
+    let b_winetricks = gtk::Button::with_label("前缀工具");
+    b_winetricks.add_css_class("flat");
+    b_winetricks.set_tooltip_text(Some("在某个已有前缀上运行 winetricks"));
+    // pack_end 先包的靠最右：菜单占右上角，新建在它左边，前缀工具再往左
     header.pack_end(&b_menu);
     header.pack_end(&b_new);
+    header.pack_end(&b_winetricks);
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(&header);

@@ -261,6 +261,48 @@ impl PrefixInit {
     }
 }
 
+// ---------------------------------------------------------------- 自带数据
+
+/// 装机时的数据目录（winetricks 本体就放这儿）。
+///
+/// 顺序：开发树 `$CARGO_MANIFEST_DIR/data` → 可执行文件同级的 `data/`
+/// （`/usr/bin/carboy` 时是 `/usr/data`，装了 rpm/deb 的情况走不到）→
+/// 三种包管理器 / 自编译的安装前缀 → `~/.local/share`。
+///
+/// 不靠 `std::env::current_exe()` 取前缀：rpm 打包后二进制落在 `%{_bindir}`，
+/// 由 `%{_datadir}` 反推太脆，直接列候选。
+pub fn data_file(rel: &str) -> Option<PathBuf> {
+    let home = super::desktop::home();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(m) = option_env!("CARGO_MANIFEST_DIR") {
+        dirs.push(PathBuf::from(m).join("data"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(d) = exe.parent().and_then(|p| p.parent()) {
+            dirs.push(d.join("share/carboy"));
+            dirs.push(d.join("data"));
+        }
+    }
+    for base in ["/usr/local", "/usr", "/app"] {
+        dirs.push(PathBuf::from(base).join("share/carboy"));
+    }
+    dirs.push(home.join(".local/share/carboy"));
+    dirs.into_iter()
+        .map(|d| d.join(rel))
+        .find(|p| p.is_file())
+}
+
+/// Carboy 自带的 winetricks：普通 Wine 前缀一律用它。
+///
+/// 不走 `which("winetricks")` —— 系统里装的那份版本不受控，老到连
+/// `--force` / 新前缀都认不出来，而 Wine 前缀没有 Proton 那套
+/// `protonfixes/winetricks` 可以借用，所以自带一份钉死版本的。
+pub fn bundled_winetricks() -> Option<String> {
+    data_file("winetricks/winetricks")
+        .filter(|p| is_exec(p))
+        .map(|p| p.to_string_lossy().to_string())
+}
+
 // ---------------------------------------------------------------- 前缀工具
 
 /// 一份已有前缀是谁建的 —— 决定跑 winetricks 时该用哪份 wine。
@@ -402,20 +444,25 @@ impl PrefixInfo {
         }
     }
 
-    /// winetricks 本体：只用这份前缀所属 Proton **自带**的那份
-    /// （`protonfixes/winetricks`，umu 的 winetricks 动词用的也是它）。
-    /// 系统里装的那份版本未必配合适这份前缀，不拿它当后备。
+    /// winetricks 本体，按前缀类型各有来源：
+    ///
+    /// - Proton 前缀：用这份 Proton **自带**的那份（`protonfixes/winetricks`，
+    ///   umu 的 winetricks 动词用的也是它），找不到就报错，不跨 Proton 借。
+    /// - Wine 前缀：用 carboy 自带的稳定版（见 [`bundled_winetricks`]），
+    ///   系统 PATH 里那份不参与。
     pub fn winetricks(&self) -> Option<String> {
-        let PrefixRunner::Proton { root } = &self.runner else {
-            return None;
-        };
-        for rel in ["protonfixes/winetricks", "protonfixes/files/bin/winetricks"] {
-            let p = Path::new(root).join(rel);
-            if is_exec(&p) {
-                return Some(p.to_string_lossy().to_string());
+        match &self.runner {
+            PrefixRunner::Proton { root } => {
+                for rel in ["protonfixes/winetricks", "protonfixes/files/bin/winetricks"] {
+                    let p = Path::new(root).join(rel);
+                    if is_exec(&p) {
+                        return Some(p.to_string_lossy().to_string());
+                    }
+                }
+                None
             }
+            PrefixRunner::Wine { .. } => bundled_winetricks(),
         }
-        None
     }
 
     /// 在这份前缀上跑 winetricks 的完整命令
@@ -428,9 +475,7 @@ impl PrefixInfo {
             PrefixRunner::Proton { root } => {
                 format!("这份 Proton 里没有自带 winetricks：{root}")
             }
-            PrefixRunner::Wine { .. } => {
-                "这个前缀不是 Proton 建的，没有配套的 winetricks".to_string()
-            }
+            PrefixRunner::Wine { .. } => "没找到 carboy 自带的 winetricks".to_string(),
         })?;
         let mut parts = vec!["env".to_string()];
         for (k, v) in env {
@@ -905,6 +950,67 @@ mod tests {
         let empty = root.join("empty");
         fs::create_dir_all(&empty).unwrap();
         assert!(inspect_prefix(&empty, "").is_none());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 自带的那份 winetricks 必须真的在树里、而且是可执行的 shell 脚本
+    #[test]
+    fn bundled_winetricks_is_shipped() {
+        let p = data_file("winetricks/winetricks").expect("data/winetricks/winetricks 缺失");
+        assert!(is_exec(&p), "{} 不可执行", p.display());
+        let head = fs::read_to_string(&p).unwrap_or_default();
+        assert!(head.starts_with("#!/bin/sh"), "不是 shell 脚本");
+        assert!(head.contains("WINETRICKS_VERSION="), "不是 winetricks");
+        assert!(data_file("winetricks/COPYING").is_some(), "缺 COPYING");
+    }
+
+    /// Wine 前缀拿自带的，Proton 前缀只认自己那份，谁也不跨用
+    #[test]
+    fn winetricks_source_depends_on_prefix_kind() {
+        let root = std::env::temp_dir().join(format!("carboy-wt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        let wine_pfx = root.join("wine");
+        fs::create_dir_all(wine_pfx.join("drive_c")).unwrap();
+        fs::write(wine_pfx.join("system.reg"), "").unwrap();
+        let info = inspect_prefix(&wine_pfx, "/bin/true").unwrap();
+        assert_eq!(info.winetricks(), bundled_winetricks());
+        assert!(info.winetricks().unwrap().contains("data/winetricks/winetricks"));
+
+        // Proton 里没有 protonfixes/winetricks → None，不回落自带那份
+        let proton = root.join("proton");
+        fs::create_dir_all(proton.join("files/bin")).unwrap();
+        fs::write(proton.join("toolmanifest.vdf"), "").unwrap();
+        let fake_wine = proton.join("files/bin/wine");
+        fs::write(&fake_wine, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&fake_wine, fs::Permissions::from_mode(0o755)).unwrap();
+        let pfx = root.join("proton-pfx");
+        fs::create_dir_all(pfx.join("drive_c")).unwrap();
+        fs::write(pfx.join("system.reg"), "").unwrap();
+        fs::write(
+            pfx.join("config_info"),
+            format!(
+                "p-1.0\n{}/files/share/fonts/\n",
+                proton.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let info = inspect_prefix(&pfx, "").unwrap();
+        assert_eq!(info.winetricks(), None);
+
+        // 补上自带那份就用它
+        let own = proton.join("protonfixes/winetricks");
+        fs::create_dir_all(own.parent().unwrap()).unwrap();
+        fs::write(&own, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            info.winetricks(),
+            Some(own.to_string_lossy().to_string())
+        );
+        let cmd = info.command().unwrap();
+        assert!(cmd.contains("protonfixes/winetricks"), "{cmd}");
+        assert!(!cmd.contains("data/winetricks"), "{cmd}");
 
         let _ = fs::remove_dir_all(&root);
     }

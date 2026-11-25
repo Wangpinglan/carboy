@@ -1,5 +1,5 @@
 Name:           carboy
-Version:        0.1.2
+Version:        0.1.3
 Release:        1%{?dist}
 Summary:        为 Wine / Proton 应用生成可用的 .desktop
 License:        MIT
@@ -45,6 +45,10 @@ install -Dm644 data/io.github.carboy.MkDesktop.svg \
     %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.carboy.MkDesktop.svg
 install -Dm644 data/io.github.carboy.MkDesktop.metainfo.xml \
     %{buildroot}%{_datadir}/metainfo/io.github.carboy.MkDesktop.metainfo.xml
+install -Dm755 data/winetricks/winetricks \
+    %{buildroot}%{_datadir}/carboy/winetricks/winetricks
+install -Dm644 data/winetricks/COPYING \
+    %{buildroot}%{_datadir}/carboy/winetricks/COPYING
 
 %files
 %license LICENSE
@@ -52,8 +56,13 @@ install -Dm644 data/io.github.carboy.MkDesktop.metainfo.xml \
 %{_datadir}/applications/io.github.carboy.MkDesktop.desktop
 %{_datadir}/icons/hicolor/scalable/apps/io.github.carboy.MkDesktop.svg
 %{_datadir}/metainfo/io.github.carboy.MkDesktop.metainfo.xml
+%{_datadir}/carboy/winetricks/winetricks
+%{_datadir}/carboy/winetricks/COPYING
 
 %changelog
+* Wed Nov 25 2026 Carboy contributors <carboy@example.invalid> - 0.1.3-1
+- 新增：「前缀工具」移到顶栏，普通 Wine 前缀也能运行 winetricks
+
 * Wed Nov 25 2026 Carboy contributors <carboy@example.invalid> - 0.1.2-1
 - 修复：新建前缀后部分游戏（如原神）进游戏闪退
 - 修复：Proton 目录选成上一级目录时无法启动

@@ -62,3 +62,8 @@ src/
 
 MIT。参考过 Lutris / Heroic / Bottles / umu-launcher / wine / gnome-shell 的实现思路，
 但没有复制它们的代码（那些是 GPL）。
+
+例外：`data/winetricks/winetricks` 是 [Winetricks](https://github.com/Winetricks/winetricks)
+的上游发行版原件（LGPL-2.1，见同目录 `COPYING`），原样随包分发，不做修改。
+「运行 winetricks」对 Proton 前缀用它所属 Proton 自带的那份；普通 Wine 前缀用这份自带的，
+系统 PATH 里的 winetricks 不参与。

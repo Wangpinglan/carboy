@@ -23,6 +23,10 @@ install: build
 		$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/io.github.carboy.MkDesktop.svg
 	install -Dm644 data/io.github.carboy.MkDesktop.metainfo.xml \
 		$(DESTDIR)$(PREFIX)/share/metainfo/io.github.carboy.MkDesktop.metainfo.xml
+	install -Dm755 data/winetricks/winetricks \
+		$(DESTDIR)$(PREFIX)/share/carboy/winetricks/winetricks
+	install -Dm644 data/winetricks/COPYING \
+		$(DESTDIR)$(PREFIX)/share/carboy/winetricks/COPYING
 
 rpm:
 	./packaging/build-rpm.sh

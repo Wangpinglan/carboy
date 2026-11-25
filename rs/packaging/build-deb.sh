@@ -27,6 +27,10 @@ install -Dm644 data/io.github.carboy.MkDesktop.svg \
   "$PKG/usr/share/icons/hicolor/scalable/apps/io.github.carboy.MkDesktop.svg"
 install -Dm644 data/io.github.carboy.MkDesktop.metainfo.xml \
   "$PKG/usr/share/metainfo/io.github.carboy.MkDesktop.metainfo.xml"
+install -Dm755 data/winetricks/winetricks \
+  "$PKG/usr/share/carboy/winetricks/winetricks"
+install -Dm644 data/winetricks/COPYING \
+  "$PKG/usr/share/carboy/winetricks/COPYING"
 install -Dm644 LICENSE "$PKG/usr/share/doc/carboy/copyright"
 
 mkdir -p "$PKG/DEBIAN"

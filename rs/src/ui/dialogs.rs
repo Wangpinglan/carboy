@@ -573,7 +573,10 @@ pub fn open_winetricks(ui: &Rc<Ui>, dir: PathBuf) {
                     head.push_str(&format!("类型：Wine（{w}）\n"));
                 }
             }
-            match p.command() {
+            match p.winetricks() {
+                Some(wt) => head.push_str(&format!("winetricks：{wt}\n")),
+                None => head.push_str("winetricks：这份 Proton 里没有带\n"),
+            }            match p.command() {
                 Ok(cmd) => {
                     head.push_str(&format!("$ {cmd}\n\n"));
                     Some((cmd, p.cwd()))
