@@ -110,6 +110,48 @@ pub fn open_build(ui: &Rc<Ui>, kind: system::Kind) {
         let g2 = adw::PreferencesGroup::new();
         g2.add(&r_i386);
         page.add(&g2);
+
+        // 32 位要的那十几样汇总成一行，缺几项就在副标题里说几项，
+        // 具体装法交给下面的命令，不摊成一张长表。
+        let i386 = system::i386_dev_status();
+        let miss: Vec<String> = i386
+            .iter()
+            .filter(|d| !d.found)
+            .map(|d| d.name.clone())
+            .collect();
+        let row = adw::ActionRow::builder()
+            .title(if miss.is_empty() {
+                "✓  32 位开发库"
+            } else {
+                "⚠  32 位开发库"
+            })
+            .subtitle(if miss.is_empty() {
+                "32 位那半要的库都齐了".to_string()
+            } else {
+                format!("缺 {} 项，补上才能编 32 位", miss.len())
+            })
+            .build();
+        let g32 = adw::PreferencesGroup::new();
+        g32.add(&row);
+        if !miss.is_empty() {
+            let hint = gtk::Label::builder()
+                .label(system::install_hint(&miss))
+                .xalign(0.0)
+                .wrap(true)
+                .margin_start(12)
+                .margin_end(12)
+                .margin_bottom(12)
+                .build();
+            hint.add_css_class("dim-label");
+            g32.add(&hint);
+        }
+        // 关掉 32 位时这一组跟开关一起消失
+        g32.set_visible(r_i386.is_active());
+        r_i386.connect_active_notify({
+            let g32 = g32.clone();
+            move |r| g32.set_visible(r.is_active())
+        });
+        page.add(&g32);
     }
 
     let deps_scroll = gtk::ScrolledWindow::builder()

@@ -652,16 +652,62 @@ fn static_libc() -> bool {
     .any(|p| Path::new(p).is_file())
 }
 
-/// 32 位开发库在不在。挑各发行版放 32 位 crt1.o 的地方当哨兵 ——
-/// 装了 32 位运行库（glibc.i686）不会有这个文件，必须是 -devel / -dev。
-fn i386_dev_libs() -> bool {
+/// ELF 头里 EI_CLASS 是不是 32 位（读前 5 个字节就够）。
+fn is_elf32(p: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = fs::File::open(p) else {
+        return false;
+    };
+    let mut h = [0u8; 5];
+    f.read_exact(&mut h).is_ok() && &h[..4] == b"\x7fELF" && h[4] == 1
+}
+
+/// 某个 soname 有没有 32 位那份（且是开发期软链）。
+///
+/// 不能光看路径存在：Arch 的 `/usr/lib` 是 64 位、Fedora 的是 32 位，
+/// 所以读 ELF 头确认 `ELFCLASS32`，再把三个发行版的 32 位库目录都试一遍。
+fn i386_lib(soname: &str) -> bool {
     [
-        "/usr/lib/crt1.o",                  // Fedora / openSUSE
-        "/usr/lib32/crt1.o",                // Arch
-        "/usr/lib/i386-linux-gnu/crt1.o",   // Debian / Ubuntu
+        "/usr/lib",                    // Fedora / openSUSE
+        "/usr/lib32",                  // Arch
+        "/usr/lib/i386-linux-gnu",     // Debian / Ubuntu
     ]
     .iter()
-    .any(|p| Path::new(p).is_file())
+    .map(|d| Path::new(d).join(soname))
+    .any(|p| is_elf32(&p))
+}
+
+/// 编译 32 位 wine 额外要的 32 位开发库。
+///
+/// 一项一条，界面自己汇总成一行，别摊成表。
+pub fn i386_dev_status() -> Vec<Dep> {
+    [
+        ("libc（32 位）", "libc.so"),
+        ("libstdc++（32 位）", "libstdc++.so"),
+        ("freetype2（32 位）", "libfreetype.so"),
+        ("fontconfig（32 位）", "libfontconfig.so"),
+        ("x11（32 位）", "libX11.so"),
+        ("xext（32 位）", "libXext.so"),
+        ("xrender（32 位）", "libXrender.so"),
+        ("xrandr（32 位）", "libXrandr.so"),
+        ("xi（32 位）", "libXi.so"),
+        ("xcursor（32 位）", "libXcursor.so"),
+        ("xfixes（32 位）", "libXfixes.so"),
+        ("xinerama（32 位）", "libXinerama.so"),
+        ("xcomposite（32 位）", "libXcomposite.so"),
+        ("gnutls（32 位）", "libgnutls.so"),
+        ("alsa（32 位）", "libasound.so"),
+        ("libpulse（32 位）", "libpulse.so"),
+        ("vulkan（32 位）", "libvulkan.so"),
+    ]
+    .iter()
+    .map(|(name, so)| Dep {
+        name: (*name).into(),
+        required: true,
+        found: i386_lib(so),
+        note: String::new(),
+    })
+    .collect()
 }
 
 pub fn dep_status(kind: Kind) -> Vec<Dep> {
@@ -714,13 +760,7 @@ pub fn dep_status(kind: Kind) -> Vec<Dep> {
                 note: "preloader 需要 -static-pie".into(),
             });
             // 32 位那套（32 位开发库）只有打开「同时编译 32 位」才用得上，
-            // 所以不算必填，缺了也只是把这一行标灰。
-            out.push(Dep {
-                name: "32 位开发库".into(),
-                required: false,
-                found: i386_dev_libs(),
-                note: "编译 32 位 wine 才需要（glibc-devel.i686 等）".into(),
-            });
+            // 单独一张表（i386_dev_status），由界面汇总成一行。
             for (m, note) in [
                 ("freetype2", "字体"),
                 ("fontconfig", "字体匹配"),
@@ -751,6 +791,23 @@ pub fn dep_status(kind: Kind) -> Vec<Dep> {
 }
 
 fn pkg_for(name: &str, fedora: bool) -> String {
+    // "freetype2（32 位）" 这类：包名由 64 位那条加架构后缀推出来，
+    // 不用再维护一张十七行的对照表。
+    if let Some(base) = name.strip_suffix("（32 位）") {
+        let (fed, deb) = match base {
+            "libc" => ("glibc-devel.i686", "libc6-dev:i386"),
+            "libstdc++" => ("libstdc++-devel.i686", "g++-multilib"),
+            _ => {
+                let b = pkg_for(base, fedora);
+                return if fedora {
+                    format!("{b}.i686")
+                } else {
+                    format!("{b}:i386")
+                };
+            }
+        };
+        return if fedora { fed.into() } else { deb.into() };
+    }
     let m = if fedora {
         [
             ("gcc", "gcc"),
@@ -765,7 +822,6 @@ fn pkg_for(name: &str, fedora: bool) -> String {
             ("scdoc", "scdoc"),
             ("PE 交叉编译器", "lld clang llvm"),
             ("静态 libc (libc.a)", "glibc-static"),
-            ("32 位开发库", "glibc-devel.i686"),
             ("freetype2", "freetype-devel"),
             ("fontconfig", "fontconfig-devel"),
             ("x11", "libX11-devel"),
@@ -796,7 +852,6 @@ fn pkg_for(name: &str, fedora: bool) -> String {
             ("scdoc", "scdoc"),
             ("PE 交叉编译器", "clang lld llvm"),
             ("静态 libc (libc.a)", "libc6-dev"),
-            ("32 位开发库", "gcc-multilib"),
             ("freetype2", "libfreetype-dev"),
             ("fontconfig", "libfontconfig-dev"),
             ("x11", "libx11-dev"),
@@ -1027,6 +1082,22 @@ mod tests {
         assert!(!is_64bit_only(&mk("w32", "win32", false)));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 32 位那些行要能换成 `xxx.i686` / `xxx:i386`
+    #[test]
+    fn i386_deps_map_to_arch_packages() {
+        let d = i386_dev_status();
+        assert_eq!(d.len(), 17);
+        for dep in &d {
+            assert!(dep.name.ends_with("（32 位）"), "{}", dep.name);
+        }
+        assert_eq!(pkg_for("freetype2（32 位）", true), "freetype-devel.i686");
+        assert_eq!(pkg_for("freetype2（32 位）", false), "libfreetype-dev:i386");
+        assert_eq!(pkg_for("libc（32 位）", true), "glibc-devel.i686");
+        assert_eq!(pkg_for("libstdc++（32 位）", false), "g++-multilib");
+        // 64 位那条不受影响
+        assert_eq!(pkg_for("freetype2", true), "freetype-devel");
     }
 
     /// 自带的那份 winetricks 必须真的在树里、而且是可执行的 shell 脚本
