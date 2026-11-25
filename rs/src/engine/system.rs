@@ -333,6 +333,33 @@ fn prefix_version(dir: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// `system.reg` 开头那几行里的 `#arch`。文件很大（几 MB），只读前面一段。
+fn prefix_arch(dir: &Path) -> String {
+    use std::io::{BufRead, BufReader};
+    let Ok(f) = fs::File::open(dir.join("system.reg")) else {
+        return String::new();
+    };
+    for line in BufReader::new(f).lines().take(16).map_while(Result::ok) {
+        if let Some(v) = line.trim().strip_prefix("#arch=") {
+            return v.trim().to_string();
+        }
+    }
+    String::new()
+}
+
+/// 这份前缀只装了 64 位那一半。
+///
+/// Wine 用 `--enable-archs=x86_64`（不带 i386）编出来时，`wineboot` 照样把前缀
+/// 标成 `#arch=win64`，但 `drive_c/windows/syswow64` 是空的 —— 那里面本该放
+/// 32 位 dll。winetricks 看到 win64 就会去跑 `C:\windows\syswow64\regedit.exe`，
+/// 文件不存在，wine 以 53 退出，于是装字体这类要走注册表的动词全部半途作废。
+///
+/// 判据用 `syswow64/kernel32.dll` 而不是"目录是否为空"：目录里可能躺着别的
+/// 东西，但缺 kernel32 就说明 32 位那一套根本没装上。
+pub fn is_64bit_only(dir: &Path) -> bool {
+    prefix_arch(dir) == "win64" && !dir.join("drive_c/windows/syswow64/kernel32.dll").is_file()
+}
+
 fn dir_name(p: &str) -> String {
     Path::new(p)
         .file_name()
@@ -625,6 +652,18 @@ fn static_libc() -> bool {
     .any(|p| Path::new(p).is_file())
 }
 
+/// 32 位开发库在不在。挑各发行版放 32 位 crt1.o 的地方当哨兵 ——
+/// 装了 32 位运行库（glibc.i686）不会有这个文件，必须是 -devel / -dev。
+fn i386_dev_libs() -> bool {
+    [
+        "/usr/lib/crt1.o",                  // Fedora / openSUSE
+        "/usr/lib32/crt1.o",                // Arch
+        "/usr/lib/i386-linux-gnu/crt1.o",   // Debian / Ubuntu
+    ]
+    .iter()
+    .any(|p| Path::new(p).is_file())
+}
+
 pub fn dep_status(kind: Kind) -> Vec<Dep> {
     let mut out = Vec::new();
     match kind {
@@ -674,6 +713,14 @@ pub fn dep_status(kind: Kind) -> Vec<Dep> {
                 found: libc,
                 note: "preloader 需要 -static-pie".into(),
             });
+            // 32 位那套（32 位开发库）只有打开「同时编译 32 位」才用得上，
+            // 所以不算必填，缺了也只是把这一行标灰。
+            out.push(Dep {
+                name: "32 位开发库".into(),
+                required: false,
+                found: i386_dev_libs(),
+                note: "编译 32 位 wine 才需要（glibc-devel.i686 等）".into(),
+            });
             for (m, note) in [
                 ("freetype2", "字体"),
                 ("fontconfig", "字体匹配"),
@@ -718,6 +765,7 @@ fn pkg_for(name: &str, fedora: bool) -> String {
             ("scdoc", "scdoc"),
             ("PE 交叉编译器", "lld clang llvm"),
             ("静态 libc (libc.a)", "glibc-static"),
+            ("32 位开发库", "glibc-devel.i686"),
             ("freetype2", "freetype-devel"),
             ("fontconfig", "fontconfig-devel"),
             ("x11", "libX11-devel"),
@@ -748,6 +796,7 @@ fn pkg_for(name: &str, fedora: bool) -> String {
             ("scdoc", "scdoc"),
             ("PE 交叉编译器", "clang lld llvm"),
             ("静态 libc (libc.a)", "libc6-dev"),
+            ("32 位开发库", "gcc-multilib"),
             ("freetype2", "libfreetype-dev"),
             ("fontconfig", "libfontconfig-dev"),
             ("x11", "libx11-dev"),
@@ -950,6 +999,32 @@ mod tests {
         let empty = root.join("empty");
         fs::create_dir_all(&empty).unwrap();
         assert!(inspect_prefix(&empty, "").is_none());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 认出"只装了 64 位那一半"的前缀（`--enable-archs=x86_64` 编出来的 wine）
+    #[test]
+    fn detects_64bit_only_prefix() {
+        let root = std::env::temp_dir().join(format!("carboy-64-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        let mk = |name: &str, arch: &str, wow64_dll: bool| {
+            let p = root.join(name);
+            fs::create_dir_all(p.join("drive_c/windows/syswow64")).unwrap();
+            fs::write(p.join("system.reg"), format!("#arch={arch}\n[Software]\n")).unwrap();
+            if wow64_dll {
+                fs::write(p.join("drive_c/windows/syswow64/kernel32.dll"), "").unwrap();
+            }
+            p
+        };
+
+        // win64 + syswow64 空着 → 纯 64 位
+        assert!(is_64bit_only(&mk("only64", "win64", false)));
+        // win64 + 有 32 位组件 → 正常前缀
+        assert!(!is_64bit_only(&mk("wow64", "win64", true)));
+        // win32 前缀本来就没有 syswow64，不算
+        assert!(!is_64bit_only(&mk("w32", "win32", false)));
 
         let _ = fs::remove_dir_all(&root);
     }

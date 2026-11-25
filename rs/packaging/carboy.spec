@@ -62,6 +62,7 @@ install -Dm644 data/winetricks/COPYING \
 %changelog
 * Wed Nov 25 2026 Carboy contributors <carboy@example.invalid> - 0.1.3-1
 - 新增：「winetricks」按钮移到顶栏，普通 Wine 前缀也能运行 winetricks
+- 改进：「编译 Wine」默认同时编译 32 位，建出来的前缀能装 winetricks 组件
 
 * Wed Nov 25 2026 Carboy contributors <carboy@example.invalid> - 0.1.2-1
 - 修复：新建前缀后部分游戏（如原神）进游戏闪退

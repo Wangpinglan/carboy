@@ -98,11 +98,13 @@ pub fn open_build(ui: &Rc<Ui>, kind: system::Kind) {
     g_hint.add(&hint);
     page.add(&g_hint);
 
-    // 32 位开关（只有 wine 用得上）
+    // 32 位开关（只有 wine 用得上）。默认开：绝大多数游戏、安装器和 winetricks
+    // 都要用 32 位那套，关掉之后建出来的前缀里 syswow64 是空的，之后再想装
+    // 组件就只能重编 —— 这个代价比多装几个开发库大得多。
     let r_i386 = adw::SwitchRow::builder()
         .title("同时编译 32 位（i386）")
-        .subtitle("只跑 64 位游戏可以关掉，能省一半依赖")
-        .active(false)
+        .subtitle("多数游戏和 winetricks 都需要；关掉只能跑纯 64 位程序")
+        .active(true)
         .build();
     if kind == system::Kind::Wine {
         let g2 = adw::PreferencesGroup::new();
@@ -573,17 +575,30 @@ pub fn open_winetricks(ui: &Rc<Ui>, dir: PathBuf) {
                     head.push_str(&format!("类型：Wine（{w}）\n"));
                 }
             }
-            match p.winetricks() {
-                Some(wt) => head.push_str(&format!("winetricks：{wt}\n")),
-                None => head.push_str("winetricks：这份 Proton 里没有带\n"),
-            }            match p.command() {
-                Ok(cmd) => {
-                    head.push_str(&format!("$ {cmd}\n\n"));
-                    Some((cmd, p.cwd()))
+            // 32 位组件缺失的前缀：winetricks 会去找 syswow64 下的程序，跑不起来。
+            // 与其把它的原始报错丢给用户，不如在这里说明白。
+            if system::is_64bit_only(&dir) {
+                head.push_str(
+                    "\n这份 Wine 只支持 64 位程序，缺少 32 位组件。\n\
+                     winetricks 在这样的前缀上装不了字体等组件。\n\n\
+                     换一份支持 32 位的 Wine，或改用 Proton 前缀再试。\n\
+                     用「编译 Wine」重建时，把「同时编译 32 位（i386）」打开。\n",
+                );
+                None
+            } else {
+                match p.winetricks() {
+                    Some(wt) => head.push_str(&format!("winetricks：{wt}\n")),
+                    None => head.push_str("winetricks：这份 Proton 里没有带\n"),
                 }
-                Err(e) => {
-                    head.push_str(&format!("{e}\n"));
-                    None
+                match p.command() {
+                    Ok(cmd) => {
+                        head.push_str(&format!("$ {cmd}\n\n"));
+                        Some((cmd, p.cwd()))
+                    }
+                    Err(e) => {
+                        head.push_str(&format!("{e}\n"));
+                        None
+                    }
                 }
             }
         }

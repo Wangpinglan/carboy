@@ -28,7 +28,7 @@
   <releases>
     <release version="0.1.3" date="2026-11-25">
       <description>
-        <p>「winetricks」按钮移到顶栏「新建」旁边；普通 Wine 前缀也能运行 winetricks，无需自行安装。</p>
+        <p>「winetricks」按钮移到顶栏「新建」旁边；普通 Wine 前缀也能运行 winetricks；「编译 Wine」默认同时编译 32 位。</p>
       </description>
     </release>
     <release version="0.1.2" date="2026-11-25">
