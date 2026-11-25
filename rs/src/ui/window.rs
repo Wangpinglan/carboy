@@ -351,10 +351,10 @@ pub fn build(app: &adw::Application) -> Rc<Ui> {
     b_new.set_tooltip_text(Some("清空表单，从头做一条新的"));
     // 前缀维护和"新建"是同一类操作（整条链路重来一遍），都放顶栏；
     // 表单页的「高级」里只留构建类入口。
-    let b_winetricks = gtk::Button::with_label("前缀工具");
+    let b_winetricks = gtk::Button::with_label("winetricks");
     b_winetricks.add_css_class("flat");
     b_winetricks.set_tooltip_text(Some("在某个已有前缀上运行 winetricks"));
-    // pack_end 先包的靠最右：菜单占右上角，新建在它左边，前缀工具再往左
+    // pack_end 先包的靠最右：菜单占右上角，新建在它左边，winetricks 再往左
     header.pack_end(&b_menu);
     header.pack_end(&b_new);
     header.pack_end(&b_winetricks);
@@ -620,7 +620,7 @@ impl Ui {    fn window(&self) -> &adw::ApplicationWindow {
             let ui = Rc::clone(ui);
             move |_| dialogs::open_build(&ui, system::Kind::Wine)
         });
-        // 前缀工具：选一个已有的前缀，用它自己的 wine / Proton 跑 winetricks
+        // winetricks：选一个已有的前缀，用它自己的 wine / Proton 跑
         b_winetricks.connect_clicked({
             let ui = Rc::clone(ui);
             move |_| {

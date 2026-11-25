@@ -519,7 +519,7 @@ fn exec_stream(cmd: &str, cwd: &Path, tx: &Sender<Msg>) -> Result<(), String> {
 /// `files/bin/wine` + `wineserver`，普通 Wine 前缀用界面上配的那份。
 /// 否则 winetricks 会拿 PATH 里的 wine 去动别人的注册表。
 pub fn open_winetricks(ui: &Rc<Ui>, dir: PathBuf) {
-    let (win, header) = open_window_dialog(ui, "前缀工具", 720, 520);
+    let (win, header) = open_window_dialog(ui, "winetricks", 720, 520);
     let spinner = gtk::Spinner::new();
     header.pack_start(&spinner);
     let b_close = gtk::Button::with_label("关闭");
