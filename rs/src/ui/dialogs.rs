@@ -511,11 +511,117 @@ fn exec_stream(cmd: &str, cwd: &Path, tx: &Sender<Msg>) -> Result<(), String> {
     }
 }
 
+// ---------------------------------------------------------------- 前缀工具
+
+/// 在指定前缀上跑 winetricks。
+///
+/// 用的必须是**建这份前缀的那份** wine：Proton 前缀就用 Proton 目录里的
+/// `files/bin/wine` + `wineserver`，普通 Wine 前缀用界面上配的那份。
+/// 否则 winetricks 会拿 PATH 里的 wine 去动别人的注册表。
+pub fn open_winetricks(ui: &Rc<Ui>, dir: PathBuf) {
+    let (win, header) = open_window_dialog(ui, "前缀工具", 720, 520);
+    let spinner = gtk::Spinner::new();
+    header.pack_start(&spinner);
+    let b_close = gtk::Button::with_label("关闭");
+    header.pack_end(&b_close);
+
+    let buf = gtk::TextBuffer::new(None::<&gtk::TextTagTable>);
+    let tv = gtk::TextView::builder()
+        .buffer(&buf)
+        .monospace(true)
+        .editable(false)
+        .top_margin(8)
+        .left_margin(10)
+        .build();
+    let sc = gtk::ScrolledWindow::builder().vexpand(true).child(&tv).build();
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.append(&header);
+    body.append(&sc);
+    win.set_content(Some(&body));
+
+    b_close.connect_clicked({
+        let win = win.clone();
+        move |_| win.close()
+    });
+
+    let wine_hint = {
+        let f = ui.files.borrow();
+        if f.wine.is_empty() {
+            system::find_wine().unwrap_or_default()
+        } else {
+            let r = system::resolve_wine(&f.wine);
+            if r.is_empty() { f.wine.clone() } else { r }
+        }
+    };
+
+    let mut head = format!("前缀：{}\n", dir.display());
+    let plan = system::inspect_prefix(&dir, &wine_hint);
+    let run = match &plan {
+        None => {
+            head.push_str("这个目录不是 Wine 前缀（缺 system.reg / drive_c）\n");
+            None
+        }
+        Some(p) => {
+            match &p.runner {
+                system::PrefixRunner::Proton { root } => {
+                    let label = if p.label.is_empty() { root } else { &p.label };
+                    head.push_str(&format!("类型：Proton（{label}）\n"));
+                }
+                system::PrefixRunner::Wine { wine } => {
+                    let w = if wine.is_empty() { "没找到 wine" } else { wine };
+                    head.push_str(&format!("类型：Wine（{w}）\n"));
+                }
+            }
+            match p.command() {
+                Ok(cmd) => {
+                    head.push_str(&format!("$ {cmd}\n\n"));
+                    Some((cmd, p.cwd()))
+                }
+                Err(e) => {
+                    head.push_str(&format!("{e}\n"));
+                    None
+                }
+            }
+        }
+    };
+
+    {
+        let mut end = buf.end_iter();
+        buf.insert(&mut end, &head);
+    }
+
+    if let Some((cmd, cwd)) = run {
+        spinner.start();
+        let (tx, rx) = channel();
+        std::thread::spawn(move || match exec_stream(&cmd, &cwd, &tx) {
+            Ok(()) => {
+                let _ = tx.send(Msg::Done(PathBuf::new()));
+            }
+            Err(e) => {
+                let _ = tx.send(Msg::Fail(e));
+            }
+        });
+
+        pump(rx, buf.clone(), sc.clone(), spinner.clone(), gtk::Stack::new(), {
+            let ui = Rc::clone(ui);
+            move |_: PathBuf, ok: bool| {
+                if ok {
+                    ui.toast_msg("winetricks 已退出");
+                } else {
+                    ui.toast_msg("winetricks 没跑起来，看日志");
+                }
+            }
+        });
+    }
+
+    win.present();
+}
+
 fn start_log(stack: &gtk::Stack, spinner: &gtk::Spinner) {
     stack.set_visible_child_name("log");
     spinner.start();
 }
-
 fn run_shell(cmd: String, cwd: PathBuf, tx: Sender<Msg>) {
     std::thread::spawn(move || {
         let res = Command::new("sh")

@@ -188,6 +188,8 @@ pub fn build(app: &adw::Application) -> Rc<Ui> {
 
     let (row_umu_build, b_umu_build) = tool_row("构建 umu-launcher", "从源码编译，或装预编译包");
     let (row_wine_build, b_wine_build) = tool_row("编译 Wine", "从源码构建到 build/wine");
+    let (row_winetricks, b_winetricks) =
+        tool_row("运行 winetricks", "选一个前缀，自动用建它的那份 wine / Proton");
     let (row_refresh, b_refresh) = tool_row("刷新图标与桌面索引", "改完图标不显示时点这里");
 
     let adv = adw::ExpanderRow::builder().title("高级").build();
@@ -198,6 +200,7 @@ pub fn build(app: &adw::Application) -> Rc<Ui> {
     adv.add_row(&gtk::Separator::new(gtk::Orientation::Horizontal));
     adv.add_row(&row_umu_build);
     adv.add_row(&row_wine_build);
+    adv.add_row(&row_winetricks);
     adv.add_row(&row_refresh);
 
     let g_adv = adw::PreferencesGroup::new();
@@ -426,7 +429,7 @@ pub fn build(app: &adw::Application) -> Rc<Ui> {
     ui.load_prefs(&saved);
     ui.wire(&b_exe, &b_prefix, &b_proton, &b_wine, &b_icon, &b_workdir,
             &b_add, &b_grab, &b_gid_reset, &b_new, &b_preset, &b_umu_build, &b_wine_build,
-            &b_refresh, &btn_install, &btn_save, &b_umu);
+            &b_winetricks, &b_refresh, &btn_install, &btn_save, &b_umu);
     ui.reload_manager();
     ui.refresh();
     if std::env::var_os("CARBOY_PAGE").map(|v| v == "manage").unwrap_or(false) {
@@ -523,6 +526,7 @@ impl Ui {    fn window(&self) -> &adw::ApplicationWindow {
         b_preset: &gtk::MenuButton,
         b_umu_build: &gtk::Button,
         b_wine_build: &gtk::Button,
+        b_winetricks: &gtk::Button,
         b_refresh: &gtk::Button,
         btn_install: &gtk::Button,
         btn_save: &gtk::Button,
@@ -612,6 +616,26 @@ impl Ui {    fn window(&self) -> &adw::ApplicationWindow {
         b_wine_build.connect_clicked({
             let ui = Rc::clone(ui);
             move |_| dialogs::open_build(&ui, system::Kind::Wine)
+        });
+        // 前缀工具：选一个已有的前缀，用它自己的 wine / Proton 跑 winetricks
+        b_winetricks.connect_clicked({
+            let ui = Rc::clone(ui);
+            move |_| {
+                let dlg = gtk::FileDialog::new();
+                dlg.set_title("选择要操作的前缀");
+                let cur = ui.files.borrow().prefix.clone();
+                if let Some(parent) = Path::new(&cur).parent() {
+                    dlg.set_initial_folder(Some(&gio::File::for_path(parent)));
+                }
+                let ui2 = Rc::clone(&ui);
+                dlg.select_folder(Some(&ui.window), None::<&gio::Cancellable>, move |res| {
+                    if let Ok(f) = res {
+                        if let Some(p) = f.path() {
+                            dialogs::open_winetricks(&ui2, p);
+                        }
+                    }
+                });
+            }
         });
         b_refresh.connect_clicked({
             let ui = Rc::clone(ui);

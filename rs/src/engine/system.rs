@@ -261,6 +261,205 @@ impl PrefixInit {
     }
 }
 
+// ---------------------------------------------------------------- 前缀工具
+
+/// 一份已有前缀是谁建的 —— 决定跑 winetricks 时该用哪份 wine。
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrefixRunner {
+    /// Proton 前缀：root 是建它的那份 Proton 的根目录
+    Proton { root: String },
+    /// 普通 Wine 前缀
+    Wine { wine: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct PrefixInfo {
+    pub prefix: PathBuf,
+    pub runner: PrefixRunner,
+    /// 版本标识（Proton 前缀才有，比如 dwproton-11.0-17），界面显示用
+    pub label: String,
+}
+
+/// 有 system.reg + drive_c 才算一个能用的前缀
+pub fn is_prefix(dir: &Path) -> bool {
+    dir.join("system.reg").is_file() && dir.join("drive_c").is_dir()
+}
+
+fn prefix_version(dir: &Path) -> String {
+    fs::read_to_string(dir.join("version"))
+        .map(|s| s.lines().next().unwrap_or("").trim().to_string())
+        .unwrap_or_default()
+}
+
+fn dir_name(p: &str) -> String {
+    Path::new(p)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| p.to_string())
+}
+
+/// 这份前缀是哪份 Proton 建的：Proton 的 `proton` 脚本会在前缀里留 `config_info`，
+/// 第二行就是 `<proton根>/files/share/fonts/`，比 `version` 里那串版本号靠谱得多
+/// （GE-Proton 的 version 写的是 `11.0-100`，在磁盘上对不上号）。
+pub fn proton_of_prefix(prefix: &Path) -> Option<String> {
+    let text = fs::read_to_string(prefix.join("config_info")).ok()?;
+    let line = text.lines().nth(1)?;
+    let root = line.trim().strip_suffix("files/share/fonts/")?;
+    let root = root.trim_end_matches('/');
+    is_proton_root(Path::new(root)).then(|| root.to_string())
+}
+
+/// `config_info` 丢了的兜底：拿 version 里的版本串去 compatibilitytools.d 里认人。
+fn proton_by_version(ver: &str) -> Option<String> {
+    if ver.is_empty() {
+        return None;
+    }
+    let home = super::desktop::home();
+    let roots = [
+        home.join(".local/share/Steam/compatibilitytools.d"),
+        home.join(".local/share/umu/compatibilitytools.d"),
+    ];
+    for root in roots {
+        let Ok(rd) = fs::read_dir(&root) else { continue };
+        let mut cands: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| is_proton_root(p))
+            .collect();
+        cands.sort();
+        cands.reverse();
+        for c in cands {
+            let v = fs::read_to_string(c.join("version")).unwrap_or_default();
+            if v.contains(ver) {
+                return Some(c.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 认一份前缀。`wine_hint` 是界面上已经配好的 wine，普通 Wine 前缀就用它。
+pub fn inspect_prefix(dir: &Path, wine_hint: &str) -> Option<PrefixInfo> {
+    if !is_prefix(dir) {
+        return None;
+    }
+    let ver = prefix_version(dir);
+    if let Some(root) = proton_of_prefix(dir).or_else(|| proton_by_version(&ver)) {
+        let label = if ver.is_empty() { dir_name(&root) } else { ver };
+        return Some(PrefixInfo {
+            prefix: dir.to_path_buf(),
+            runner: PrefixRunner::Proton { root },
+            label,
+        });
+    }
+    let wine = if wine_hint.is_empty() {
+        find_wine().unwrap_or_default()
+    } else {
+        wine_hint.to_string()
+    };
+    Some(PrefixInfo {
+        prefix: dir.to_path_buf(),
+        runner: PrefixRunner::Wine { wine },
+        label: String::new(),
+    })
+}
+
+impl PrefixInfo {
+    /// WINE / WINELOADER / WINESERVER 全指到这份前缀自己的 wine 上，
+    /// 不然 winetricks 会拿 PATH 里的 wine 去动别的前缀（版本对不上会写坏注册表）。
+    pub fn wine_env(&self) -> Option<Vec<(String, String)>> {
+        match &self.runner {
+            PrefixRunner::Proton { root } => {
+                let bin = Path::new(root).join("files/bin");
+                let wine = bin.join("wine");
+                if !is_exec(&wine) {
+                    return None;
+                }
+                let wine = wine.to_string_lossy().to_string();
+                let mut env = vec![
+                    ("WINE".to_string(), wine.clone()),
+                    ("WINELOADER".to_string(), wine),
+                ];
+                let ws = bin.join("wineserver");
+                if is_exec(&ws) {
+                    env.push(("WINESERVER".to_string(), ws.to_string_lossy().to_string()));
+                }
+                Some(env)
+            }
+            PrefixRunner::Wine { wine } => {
+                if !is_exec(Path::new(wine)) {
+                    return None;
+                }
+                let mut env = vec![("WINE".to_string(), wine.clone())];
+                if let Some(dir) = Path::new(wine).parent() {
+                    let ws = dir.join("wineserver");
+                    if is_exec(&ws) {
+                        env.push(("WINESERVER".to_string(), ws.to_string_lossy().to_string()));
+                    }
+                }
+                Some(env)
+            }
+        }
+    }
+
+    /// winetricks 本体：只用这份前缀所属 Proton **自带**的那份
+    /// （`protonfixes/winetricks`，umu 的 winetricks 动词用的也是它）。
+    /// 系统里装的那份版本未必配合适这份前缀，不拿它当后备。
+    pub fn winetricks(&self) -> Option<String> {
+        let PrefixRunner::Proton { root } = &self.runner else {
+            return None;
+        };
+        for rel in ["protonfixes/winetricks", "protonfixes/files/bin/winetricks"] {
+            let p = Path::new(root).join(rel);
+            if is_exec(&p) {
+                return Some(p.to_string_lossy().to_string());
+            }
+        }
+        None
+    }
+
+    /// 在这份前缀上跑 winetricks 的完整命令
+    pub fn command(&self) -> Result<String, String> {
+        let env = self.wine_env().ok_or_else(|| match &self.runner {
+            PrefixRunner::Proton { root } => format!("这份 Proton 里没有 files/bin/wine：{root}"),
+            PrefixRunner::Wine { .. } => "没找到可用的 wine".to_string(),
+        })?;
+        let wt = self.winetricks().ok_or_else(|| match &self.runner {
+            PrefixRunner::Proton { root } => {
+                format!("这份 Proton 里没有自带 winetricks：{root}")
+            }
+            PrefixRunner::Wine { .. } => {
+                "这个前缀不是 Proton 建的，没有配套的 winetricks".to_string()
+            }
+        })?;
+        let mut parts = vec!["env".to_string()];
+        for (k, v) in env {
+            parts.push(format!("{k}={}", shell_quote(&v)));
+        }
+        parts.push(format!(
+            "WINEPREFIX={}",
+            shell_quote(&self.prefix.to_string_lossy())
+        ));
+        parts.push(shell_quote(&wt));
+        Ok(parts.join(" "))
+    }
+
+    /// 工作目录：Proton 前缀跟着 Proton 根目录走（上游也是这么跑的），Wine 用 $HOME
+    pub fn cwd(&self) -> PathBuf {
+        match &self.runner {
+            PrefixRunner::Proton { root } => PathBuf::from(root),
+            PrefixRunner::Wine { .. } => {
+                let h = super::desktop::home();
+                if h.as_os_str().is_empty() {
+                    PathBuf::from("/")
+                } else {
+                    h
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------- 窗口
 
 #[derive(Debug, Clone)]
@@ -658,4 +857,56 @@ mod tests {
         assert!(cmds[1].ends_with("winecfg -v win10 2>&1"), "{}", cmds[1]);
         assert!(!cmds[1].contains("PROTONPATH"), "{}", cmds[1]);
     }
+
+    #[test]
+    fn prefix_recognises_wine_and_proton() {
+        let root = std::env::temp_dir().join(format!("carboy-pfx-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        // 普通 wine 前缀：只有 drive_c + system.reg
+        let wine_pfx = root.join("wine");
+        fs::create_dir_all(wine_pfx.join("drive_c")).unwrap();
+        fs::write(wine_pfx.join("system.reg"), "").unwrap();
+        assert!(is_prefix(&wine_pfx));
+        assert!(proton_of_prefix(&wine_pfx).is_none());
+        let info = inspect_prefix(&wine_pfx, "/opt/fake/wine").unwrap();
+        assert_eq!(
+            info.runner,
+            PrefixRunner::Wine { wine: "/opt/fake/wine".into() }
+        );
+
+        // Proton 前缀：config_info 第二行指回 Proton 根目录
+        let proton = root.join("proton");
+        fs::create_dir_all(&proton).unwrap();
+        fs::write(proton.join("toolmanifest.vdf"), "").unwrap();
+        let pfx = root.join("proton-pfx");
+        fs::create_dir_all(pfx.join("drive_c")).unwrap();
+        fs::write(pfx.join("system.reg"), "").unwrap();
+        fs::write(pfx.join("version"), "my-proton-1.0\n").unwrap();
+        fs::write(
+            pfx.join("config_info"),
+            format!(
+                "my-proton-1.0\n{}/files/share/fonts/\n",
+                proton.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let info = inspect_prefix(&pfx, "").unwrap();
+        assert_eq!(
+            info.runner,
+            PrefixRunner::Proton {
+                root: proton.to_string_lossy().to_string()
+            }
+        );
+        assert_eq!(info.label, "my-proton-1.0");
+        assert_eq!(info.cwd(), proton);
+
+        // 空目录不算前缀
+        let empty = root.join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        assert!(inspect_prefix(&empty, "").is_none());
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }
+
