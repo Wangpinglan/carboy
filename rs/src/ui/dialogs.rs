@@ -325,10 +325,7 @@ pub fn open_prefix_init(ui: &Rc<Ui>, dir: PathBuf) {
 
     {
         let mut start = buf.start_iter();
-        buf.insert(
-            &mut start,
-            "两步：① 建前缀 ② 把 Windows 版本设成 win10（Wine 11 默认给 Win11 22000）\n\n",
-        );
+        buf.insert(&mut start, "正在初始化前缀，完成后可以继续填表。\n\n");
     }
 
     let umu_mode = ui.umu_mode();
@@ -444,7 +441,7 @@ fn run_prefix_init(
         move || {
             // 在 $HOME 里跑：winetricks / protonfixes 都假定自己不在 prefix 目录里，
             // 别把正在建的那个目录当成 cwd 传下去。
-            let mut winver_ok = false;
+            let mut done_ok = false;
             for (i, cmd) in cmds.iter().enumerate() {
                 let _ = tx.send(Msg::Line(format!("$ {cmd}")));
                 let res = exec_stream(cmd, &cwd, &tx);
@@ -452,16 +449,14 @@ fn run_prefix_init(
                     // dwproton 等定制 Proton 在 createprefix 收尾时以非零状态退出，
                     // 前缀其实已经建好；以 system.reg / drive_c 是否存在为准。
                     if let Err(e) = res {
-                        let _ = tx.send(Msg::Line(format!(
-                            "\n建前缀的命令以 {e} 退出，下面按 system.reg / drive_c 判断结果"
-                        )));
+                        let _ = tx.send(Msg::Line(format!("\n命令以 {e} 退出，继续检查前缀产物")));
                     }
                     continue;
                 }
                 match res {
-                    Ok(()) => winver_ok = true,
+                    Ok(()) => done_ok = true,
                     Err(e) => {
-                        let _ = tx.send(Msg::Line(format!("\n✗ 设 Windows 版本失败：{e}")));
+                        let _ = tx.send(Msg::Line(format!("\n✗ 以 {e} 退出")));
                         break;
                     }
                 }
@@ -470,10 +465,8 @@ fn run_prefix_init(
             let ready = dir.join("system.reg").is_file() && dir.join("drive_c").is_dir();
             if !ready {
                 let _ = tx.send(Msg::Fail("前缀没建起来（缺 system.reg / drive_c）".into()));
-            } else if !winver_ok {
-                let _ = tx.send(Msg::Fail(
-                    "前缀建好了，但 Windows 版本没设成 win10，游戏可能照样闪退".into(),
-                ));
+            } else if !done_ok {
+                let _ = tx.send(Msg::Fail("前缀已创建，但初始化没走完".into()));
             } else {
                 let _ = tx.send(Msg::Done(dir));
             }
@@ -485,7 +478,7 @@ fn run_prefix_init(
         let win = win.clone();
         move |_: PathBuf, ok: bool| {
             if ok {
-                ui.toast_msg("前缀初始化完成（Windows 版本已设为 win10）");
+                ui.toast_msg("前缀初始化完成");
                 win.close();
             } else {
                 ui.toast_msg("前缀初始化失败，看日志");

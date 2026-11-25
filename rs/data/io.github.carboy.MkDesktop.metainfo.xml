@@ -28,7 +28,7 @@
   <releases>
     <release version="0.1.2" date="2026-11-25">
       <description>
-        <p>修复前缀初始化：建完后把 Windows 版本设为 win10（Wine 11 默认的 Win11 build 22000 会让原神等游戏闪退），并把 PROTONPATH 从 compatibilitytools.d 这类容器目录定位到真正的 Proton 根目录。</p>
+        <p>修复新建前缀后部分游戏（如原神）进游戏闪退的问题；Proton 目录选成上一级目录时也能正确识别。</p>
       </description>
     </release>
     <release version="0.1.1" date="2026-11-10">

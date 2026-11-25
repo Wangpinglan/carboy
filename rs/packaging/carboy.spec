@@ -55,11 +55,9 @@ install -Dm644 data/io.github.carboy.MkDesktop.metainfo.xml \
 
 %changelog
 * Wed Nov 25 2026 Carboy contributors <carboy@example.invalid> - 0.1.2-1
-- 修复：前缀初始化后没设 Windows 版本，Wine 11 留下 Win11 build 22000，原神进游戏闪退；
-  现在建完补一步 win10（与 WineGUI 行为一致）
-- 修复：PROTONPATH 选成 compatibilitytools.d 这类容器目录时 umu 找不到 toolmanifest.vdf，
-  改为向下定位真正的 Proton 根目录
-- 改进：前缀初始化改在 $HOME 执行、两步结果分别判定并如实提示
+- 修复：新建前缀后部分游戏（如原神）进游戏闪退
+- 修复：Proton 目录选成上一级目录时无法启动
+- 改进：前缀初始化失败的提示更准确，不再一律显示成功
 
 * Tue Nov 10 2026 Carboy contributors <carboy@example.invalid> - 0.1.1-1
 - 修复：管理页重复行、环境变量删错行、删行后预览不刷新

@@ -787,7 +787,6 @@ impl Ui {    fn window(&self) -> &adw::ApplicationWindow {
                 } else {
                     self.files.borrow_mut().proton = resolved.clone();
                     self.row_proton.set_subtitle(&resolved);
-                    self.toast_msg(&format!("Proton 定位到 {}", resolved));
                 }
             }
             "wine" => {
