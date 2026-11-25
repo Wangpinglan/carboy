@@ -8,7 +8,7 @@
 | `gui/` `tools/` | 早期 Python 原型（功能等价，保留作对照，不再维护） |
 | `docs/` | 设计文档：架构、Freedesktop 集成、参考源码清单 |
 | `refs/` | 上游源码快照与克隆脚本（读思路，不抄代码） |
-| `out/` | 构建产物：`carboy-0.1.0-1.fc45.x86_64.rpm`、`carboy_0.1.0_amd64.deb` |
+| `out/` | 构建产物：`carboy-0.1.2-1.fc45.x86_64.rpm`、`carboy_0.1.2_amd64.deb` |
 
 ## 快速开始
 

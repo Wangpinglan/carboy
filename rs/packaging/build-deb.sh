@@ -40,7 +40,7 @@ Architecture: $ARCH
 Installed-Size: $SIZE
 Depends: libgtk-4-1 (>= 4.10), libadwaita-1-0 (>= 1.5), libglib2.0-0
 Maintainer: Carboy contributors <carboy@example.invalid>
-Homepage: https://github.com/carboy/carboy
+Homepage: https://github.com/Wangpinglan/carboy
 Description: Wine / Proton 应用的 .desktop 生成器
  自动推导窗口标识（StartupWMClass），从 exe 的 PE 资源里抠图标，
  装进 hicolor 多档尺寸并刷新缓存。生成的桌面项能被 GNOME / KDE /
